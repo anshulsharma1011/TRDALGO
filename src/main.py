@@ -77,8 +77,8 @@ def get_stock_trades(ticker):
     try:
         # Fetch data for the specified ticker
         stock_data = fetch_stock_data(ticker)
-        filename = f"stock_data_{ticker.replace('.', '_')}_{datetime.now().strftime('%Y%m%d')}.csv"
-        stock_data.to_csv(f"stock_data/{filename}")
+        # filename = f"stock_data_{ticker.replace('.', '_')}_{datetime.now().strftime('%Y%m%d')}.csv"
+        # stock_data.to_csv(f"stock_data/{filename}")
 
         if stock_data.empty:
             return jsonify({
