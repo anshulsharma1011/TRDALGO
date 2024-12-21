@@ -1,18 +1,49 @@
 from flask import Flask, jsonify
-import yfinance as yf
+from nselib import capital_market as cm
+from nselib import indices
 import pandas as pd
 from datetime import datetime, timedelta
 
 app = Flask(__name__)
 
 def fetch_nifty_data():
-    # Fetch Nifty 50 data for last 20 years
-    end_date = datetime.now()
-    start_date = end_date - timedelta(days=365*20)
+    # Fetch Nifty 50 data
+    nifty_data = indices.get_index_data('NIFTY 50')
+    return pd.DataFrame(nifty_data)
+
+def fetch_stock_data(symbol):
+    """
+    Fetch historical data for a given stock symbol
+    """
+    # Get historical data
+    hist_data = cm.get_price_volume_data(symbol)
     
-    # ^NSEI is the Yahoo Finance ticker for Nifty 50
-    nifty = yf.download("^NSEI", start=start_date, end=end_date)
-    return nifty
+    if not hist_data or 'data' not in hist_data:
+        raise ValueError(f"No data found for {symbol}")
+    
+    # Convert to DataFrame
+    df = pd.DataFrame(hist_data['data'])
+    
+    # Rename columns to match our indicator calculations
+    df = df.rename(columns={
+        'CH_TIMESTAMP': 'Date',
+        'CH_OPENING_PRICE': 'Open',
+        'CH_TRADE_HIGH_PRICE': 'High',
+        'CH_TRADE_LOW_PRICE': 'Low',
+        'CH_CLOSING_PRICE': 'Close',
+        'CH_TOT_TRADED_QTY': 'Volume'
+    })
+    
+    # Convert date string to datetime
+    df['Date'] = pd.to_datetime(df['Date'])
+    df.set_index('Date', inplace=True)
+    
+    # Convert price and volume columns to numeric
+    price_columns = ['Open', 'High', 'Low', 'Close']
+    df[price_columns] = df[price_columns].apply(pd.to_numeric)
+    df['Volume'] = pd.to_numeric(df['Volume'])
+    
+    return df.sort_index()
 
 def calculate_indicators(df):
     # Calculate HLC3 (High, Low, Close average)
@@ -47,12 +78,8 @@ def calculate_indicators(df):
 @app.route('/api/stock-trades/<ticker>', methods=['GET'])
 def get_stock_trades(ticker):
     try:
-        # Fetch data and calculate indicators for the given ticker
-        end_date = datetime.now()
-        start_date = end_date - timedelta(days=365*20)
-        
-        # Download data for the specified ticker
-        stock_data = yf.download(ticker, start=start_date, end=end_date)
+        # Fetch data for the specified ticker
+        stock_data = fetch_stock_data(ticker)
         
         if stock_data.empty:
             return jsonify({
@@ -62,9 +89,6 @@ def get_stock_trades(ticker):
             
         # Calculate indicators using existing function
         result_df = calculate_indicators(stock_data)
-        
-        # Save the DataFrame to CSV with ticker name
-        # result_df.to_csv(f'{ticker}_indicators.csv')
         
         # Create a list to store trade periods
         trades = []
