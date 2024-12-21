@@ -3,6 +3,7 @@ venv/
 env/
 .env/
 .venv/
+ENV/
 
 # Python
 __pycache__/
@@ -24,11 +25,4 @@ var/
 wheels/
 *.egg-info/
 .installed.cfg
-*.egg
-
-# IDE specific files
-.idea/
-.vscode/
-*.swp
-*.swo
-.DS_Store
+*.egg 

@@ -1,4 +1,3 @@
-yfinance
+alpha_vantage
 pandas
 flask
-nselib

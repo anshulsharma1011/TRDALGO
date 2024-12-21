@@ -1,49 +1,46 @@
 from flask import Flask, jsonify
-from nselib import capital_market as cm
-from nselib import indices
+from alpha_vantage.timeseries import TimeSeries
 import pandas as pd
 from datetime import datetime, timedelta
 
 app = Flask(__name__)
 
-def fetch_nifty_data():
-    # Fetch Nifty 50 data
-    nifty_data = indices.get_index_data('NIFTY 50')
-    return pd.DataFrame(nifty_data)
+# Alpha Vantage API key - you'll need to set this up
+API_KEY = "9YJ94WG9JYJ2PS6D"
+ts = TimeSeries(key=API_KEY, output_format='pandas')
 
 def fetch_stock_data(symbol):
     """
-    Fetch historical data for a given stock symbol
+    Fetch historical data for a given stock symbol using Alpha Vantage API
     """
-    # Get historical data
-    hist_data = cm.get_price_volume_data(symbol)
-    
-    if not hist_data or 'data' not in hist_data:
-        raise ValueError(f"No data found for {symbol}")
-    
-    # Convert to DataFrame
-    df = pd.DataFrame(hist_data['data'])
-    
-    # Rename columns to match our indicator calculations
-    df = df.rename(columns={
-        'CH_TIMESTAMP': 'Date',
-        'CH_OPENING_PRICE': 'Open',
-        'CH_TRADE_HIGH_PRICE': 'High',
-        'CH_TRADE_LOW_PRICE': 'Low',
-        'CH_CLOSING_PRICE': 'Close',
-        'CH_TOT_TRADED_QTY': 'Volume'
-    })
-    
-    # Convert date string to datetime
-    df['Date'] = pd.to_datetime(df['Date'])
-    df.set_index('Date', inplace=True)
-    
-    # Convert price and volume columns to numeric
-    price_columns = ['Open', 'High', 'Low', 'Close']
-    df[price_columns] = df[price_columns].apply(pd.to_numeric)
-    df['Volume'] = pd.to_numeric(df['Volume'])
-    
-    return df.sort_index()
+    try:
+        # Append .BSE for Indian stocks if not already present
+        if not (symbol.endswith('.BSE') or symbol.endswith('.NSE')):
+            symbol = f"{symbol}.BSE"
+            
+        # Changed from 'compact' to 'full' to get complete historical data
+        data, meta_data = ts.get_daily(symbol=symbol, outputsize='full')
+        
+        # Rename columns to match our existing structure
+        data.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
+        
+        # Sort index in ascending order
+        data = data.sort_index()
+        
+        # Remove the 100-day limit to get all available data
+        # data = data.last('100D')
+        
+        return data
+        
+    except Exception as e:
+        # If BSE fails, try NSE
+        if symbol.endswith('.BSE'):
+            try:
+                symbol = symbol.replace('.BSE', '.NSE')
+                return fetch_stock_data(symbol)
+            except Exception as nested_e:
+                raise ValueError(f"Error fetching data for {symbol}: {str(nested_e)}")
+        raise ValueError(f"Error fetching data for {symbol}: {str(e)}")
 
 def calculate_indicators(df):
     # Calculate HLC3 (High, Low, Close average)
@@ -80,7 +77,9 @@ def get_stock_trades(ticker):
     try:
         # Fetch data for the specified ticker
         stock_data = fetch_stock_data(ticker)
-        
+        filename = f"stock_data_{ticker.replace('.', '_')}_{datetime.now().strftime('%Y%m%d')}.csv"
+        stock_data.to_csv(f"stock_data/{filename}")
+
         if stock_data.empty:
             return jsonify({
                 'status': 'error',
@@ -117,6 +116,51 @@ def get_stock_trades(ticker):
             'ticker': ticker,
             'total_trades': len(trades),
             'trades': trades
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+@app.route('/api/historical-data/<ticker>', methods=['GET'])
+def get_historical_data(ticker):
+    try:
+        # Fetch data for the specified ticker
+        stock_data = fetch_stock_data(ticker)
+        
+        if stock_data.empty:
+            return jsonify({
+                'status': 'error',
+                'message': f'No data found for ticker {ticker}'
+            }), 404
+        
+        # Calculate indicators
+        result_df = calculate_indicators(stock_data)
+        
+        # Convert DataFrame to dictionary format
+        historical_data = []
+        for date, row in result_df.iterrows():
+            historical_data.append({
+                'date': date.strftime('%Y-%m-%d'),
+                'open': float(row['Open']),
+                'high': float(row['High']),
+                'low': float(row['Low']),
+                'close': float(row['Close']),
+                'volume': float(row['Volume']),
+                'hlc3': float(row['HLC3']),
+                'wvwap': float(row['WVWAP']),
+                'smooth_wvwap': float(row['Smooth_WVWAP']),
+                'entry_signal': bool(row['Entry_Signal']),
+                'exit_signal': bool(row['Exit_Signal'])
+            })
+        
+        return jsonify({
+            'status': 'success',
+            'ticker': ticker,
+            'total_records': len(historical_data),
+            'data': historical_data
         })
         
     except Exception as e:
